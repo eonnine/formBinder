@@ -8,7 +8,7 @@
 	}else{
 		window[name] = factory;
 	}
-}('formBinder',function (){
+}('formBinder',function (){ 'use strict'
 	
 	var 
 		__REGEXP_ID = /\sbind\=|\sv-bind=/g,
@@ -47,6 +47,8 @@
 		this.createCallee();
 		
 
+		this.setDefault();
+		
 		console.log(this);
 	}
 	
@@ -72,7 +74,7 @@
 		 * form과 실제 데이터가 저장되는 객체를 이어주는 프록시 객체 생성
 		 * data에서 포매팅된 값을 저장하는 등의 역할에 이용함
 		 */
-		this.__dataObject__['proxy'] = option.data || {};
+		this.__dataObject__['proxy'] = ( typeof option.data === 'object' && option.data) ? option.data : {};
 		/**
 		 * 바인딩 대상의 element를 담을 객체 생성
 		 */
@@ -141,9 +143,59 @@
 		var els = form.querySelectorAll('[' + type + ']');
 		var i, len=els.length;
 		for(i=0; i<len; i++){
+			/**
+			 * bind 속성과 v-bind 속성이 저부 있다면 bind 속성만 적용
+			 */
+			this.checkOverlap(els[i]);
 			this.setElementObjectProperty(type, els[i]);
 			this.addHostPropertyToElement(els[i]);
 			this.initDataObject(type, els[i]);
+			this.addEvent(els[i]);
+		}
+	}
+	
+	formBinder.prototype.addEvent = function (el) {
+		
+		var editBeginEvent = this.editBeginEventListener.bind(this);
+		var inputEvent = this.inputEventListener.bind(this);
+		var editEndEvent = this.editEndEventListener.bind(this);
+
+		el.addEventListener('focusin', editBeginEvent, false);
+		el.addEventListener('input', inputEvent, false);
+		el.addEventListener('focusout', editEndEvent, false);
+	}
+
+	formBinder.prototype.editBeginEventListener = function (e) {
+		e.preventDefault();
+		e.stopPropagation();
+		
+		e.target.value = e.target['@value'];
+	};
+	
+	formBinder.prototype.inputEventListener = function (e) {
+		e.preventDefault();
+		e.stopPropagation();
+		
+		//e.target['@value'] = e.target.value;
+	};
+	
+	formBinder.prototype.editEndEventListener = function (e) {
+		e.preventDefault();
+		e.stopPropagation();
+		
+		//this.__dataObject__['proxy'][e.target['@bind']] = e.target['@value'];
+		console.log(this.__dataObject__);
+	};
+	
+	formBinder.prototype.checkOverlap = function (el) {
+		if( el.hasAttribute('bind') && el.hasAttribute('v-bind') ){
+			el.removeAttribute('v-bind');
+		}
+	}
+	
+	formBinder.prototype.checkOverlap = function (el) {
+		if( el.hasAttribute('bind') && el.hasAttribute('v-bind') ){
+			el.removeAttribute('v-bind');
 		}
 	}
 	
@@ -157,15 +209,16 @@
 	}
 	
 	formBinder.prototype.addHostPropertyToElement = function (el) {
-		this.addFormatter(el);
+		this.addFormatterPropertyToElement(el);
 		var attrs = el.attributes;
 		var i, len=attrs.length;
 		for(i=0; i<len; i++){
-			this.addEvent(el, attrs[i].name, attrs[i].value);
+			this.addKeyPropertyToElement(el, attrs[i].value);
+			this.addEventPropertyToElement(el, attrs[i].name, attrs[i].value);
 		}
 	}
 	
-	formBinder.prototype.addFormatter = function (el) {
+	formBinder.prototype.addFormatterPropertyToElement = function (el) {
 		if( !el.hasAttribute('@fmt') ){
 			el['@fmt'] = function () {};
 			return;
@@ -179,7 +232,11 @@
 		}
 	}
 	
-	formBinder.prototype.addEvent = function (el, evtNm, evtHandlerNm) {
+	formBinder.prototype.addKeyPropertyToElement = function (el, propValue) {
+		el['@bind'] = propValue;
+	}
+	
+	formBinder.prototype.addEventPropertyToElement = function (el, evtNm, evtHandlerNm) {
 		if( !__hasProp.call(el, '@event') ){
 			el['@event'] = Object.create(null);
 		}
@@ -198,25 +255,102 @@
 		}
 	}
 	
-	formBinder.prototype.initDataObject = function (type, el) {
-		var dataProxyObject = this.__dataObject__['proxy'];
-		var key = el.getAttribute(type);
-		if( !__hasProp.call(dataProxyObject, key) ){
-			dataProxyObject[key] = ( el.value == undefined ) ? '' : el.value ;
-		}
-		this.setElementValue(el, '00');
-		this.setElementFmtValue(el, '00');
-	}
-	
-	
-	formBinder.prototype.setElementValue = function (el, value) {
+	formBinder.prototype.addValuePropertyToElement = function (el, value) {
 		el['@value'] = value;
-	}
-	
-	formBinder.prototype.setElementFmtValue = function (el, value) {
 		el['@value-fmt'] = el['@fmt'](value) || value;
 	}
 	
+	formBinder.prototype.initDataObject = function (type, el) {
+		var dataObject = this.__dataObject__['data'];
+		var dataProxyObject = this.__dataObject__['proxy'];
+		var key = el.getAttribute(type);
+		
+		if( !__hasProp.call(dataObject, key) ){
+			/**
+			 * 인자로 받은 data 객체의 각 속성값이 있는지 체크한 뒤
+			 * 값이 있으면 기본값으로 초기화, 없으면 빈 값으로 초기화
+			 */
+			dataProxyObject[key] = ( dataProxyObject[key] != undefined ) ? dataProxyObject[key] : '';
+			dataObject[key] = dataProxyObject[key]; 
+			this.defineDataProxyProperty(dataProxyObject, key);
+		}
+		
+		this.addValuePropertyToElement(el, dataProxyObject[key]);
+	}
+	
+	formBinder.prototype.defineDataProxyProperty = function (dataProxyObject, propNm) {
+		/**
+		 * @Todo 메모리 누수 체크
+		 */
+		var _this = this;
+		var dataObject = _this.__dataObject__['data'];
+		Object.defineProperty(dataProxyObject, propNm, {
+			get: function () {
+				return dataObject[propNm];
+			},
+			set: function (v) {
+				dataObject[propNm] = v;
+				_this.setValueToElement('bind', propNm, v);
+				_this.setValueToElement('v-bind', propNm, v);
+			}
+		});
+	}
+
+	formBinder.prototype.setDefault = function () {
+		this.setValueToAllElement('bind');
+		this.setValueToAllElement('v-bind');
+	}
+	
+	formBinder.prototype.setValueToAllElement = function (type) {
+		var bindElement = this.__elementObject__[type];
+		var data = this.__dataObject__['proxy'];
+		var i, len;
+		for(var k in bindElement){
+			len=bindElement[k].length
+			for(i=0; i<len; i++){
+				bindElement[k][i].value = bindElement[k][i]['@value-fmt'];
+			}
+		}
+	}
+	
+	formBinder.prototype.setValueToElement = function (type, key, value) {
+		var elementArray = this.__elementObject__[type][key];
+		var data = this.__dataObject__['proxy'];
+		var i,len=elementArray.length;
+		/**
+		 * 각 요소의 바인딩 속성을 새로운 값으로 갱신한 뒤 포매팅값으로 값 세팅
+		 */
+		for(i=0; i<len; i++){
+			this.addValuePropertyToElement(elementArray[i], value);
+			( type === 'bind' ) 
+			? elementArray[i].value = elementArray[i]['@value-fmt']
+			: elementArray[i].textContent = elementArray[i]['@value-fmt']
+			;
+		}
+	}
+	
+	formBinder.prototype.getData = function (){
+		var newData = {};
+		var data = this.__dataObject__['proxy'];
+		for(var k in data){
+			newData[k] = data[k];
+		}
+		return newData;
+	}
+	
+	formBinder.prototype.setData = function (data){
+		var originData = this.__dataObject__['proxy'];
+		for(var k in data){
+			originData[k] = data[k];
+		}
+	}
+	
+	formBinder.prototype.clear = function (){
+		var originData = this.__dataObject__['proxy'];
+		for(var k in data){
+			originData[k] = '';
+		}
+	}
 	
 	return formBinder;
 }()));
