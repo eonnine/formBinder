@@ -1,5 +1,5 @@
 (function (name, factory) {
-	if(typeof define === 'function' && define.amd !== undefined){
+	if(typeof define === 'function' && define.modular !== undefined){
 		define(name, {}, function () {
 			return factory;
 		});
@@ -10,14 +10,31 @@
 	}
 }('formBinder',function (){ 'use strict'
 	
+	
 	var 
+		__inputDefaultNumber = 0,
+		__REGEXP_NUMBER = /[^0-9.]/g,
 		__REGEXP_ID = /\sbind\=|\sv-bind=/g,
-		__hasProp = Object.prototype.hasOwnProperty
+		__hasProp = Object.prototype.hasOwnProperty,
+		__getDefaultValidation = function () {
+			return {
+				type: 'string',
+				maxLength: -1
+			};
+		},
+		__definePropertyToReadOnly = function (target, key) {
+			Object.defineProperty(target, key, {
+				configurable: false,
+				enumerable: false,
+				writable: false
+			});
+		}
 	;
 	
 	var formBinder = function (option) {
 		this.init(option);
-		return this.callee;
+		return this;
+		//return this.callee;
 	}
 	
 	formBinder.prototype.init = function (option) {
@@ -45,22 +62,28 @@
 		 * 폼바인더 객체 생성시 반환해줄 callee 생성
 		 */
 		this.createCallee();
-		
 
 		this.setDefault();
-		
-		console.log(this);
 	}
 	
 	formBinder.prototype.optionValidator = function (option) {
 		if( option == undefined ){
-			this.throwError('syntax', 'constructor property is not define');
+			this.throwError('syntax', 'constructor parameter is required');
 		} else
 		if( typeof option !== 'object' ){
-			this.throwError('type', 'constructor property is not object');
+			this.throwError('type', 'constructor parameter must be object');
 		} else
 		if( !option.hasOwnProperty('id') ){
-			this.throwError('syntax', 'constructor property is required: "id"');
+			this.throwError('syntax', '[constructor parameter] property is required: "id"');
+		}
+		
+		if( option.hasOwnProperty('validation') ){
+			if( Array.isArray(option['validation']) ){
+				( option.validation[0] === undefined ) ? {} : option.validation[0];
+				( option.validation[1] === undefined ) ? function () {} : option.validation[1];
+			} else {
+				this.throwError('syntax', '[constructor parameter] property must be array: "validation"');
+			}
 		}
 	}
 	
@@ -95,21 +118,27 @@
 		this.callee = {};
 	}
 	
-	formBinder.prototype.throwError = function (type, message) {
+	formBinder.prototype.throwError = function (type, message, isThrow) {
 		message = '[formBinder] ' + message;
-		switch (type) {
-		case 'error':
-			throw new Error(message);
-			break;
-		case 'syntax':
-			throw new SyntaxError(message);
-			break;
-		case 'type':
-			throw new TypeError(message);
-			break;
-		case 'range':
-			throw new RangeError(message);
-			break;
+		isThrow = ( isThrow === undefined ) ? true : isThrow;
+
+		if(isThrow){
+			switch (type) {
+			case 'error':
+					throw new Error(message);
+				break;
+			case 'syntax':
+				throw new SyntaxError(message);
+				break;
+			case 'type':
+				throw new TypeError(message);
+				break;
+			case 'range':
+				throw new RangeError(message);
+				break;
+			}
+		} else {
+			console.warn(message);
 		}
 	}
 	
@@ -118,8 +147,13 @@
 		this.setHostObject('formatter', option.formatter);
 		this.setHostObject('method', option.method);
 		this.setHostObject('scope', option.method);
+
+		this.__hostObject__['validation'] = option.validation[0];
+		this.__hostObject__['validFn'] = option.validation[1];
+		__definePropertyToReadOnly(this.__hostObject__, 'validation');
+		
 		this.__hostObject__['scope'].id = option.id;
-		this.__hostObject__['scope'].schema = option.schema;
+		this.__hostObject__['scope'].validation = this.__hostObject__['validation'];
 		this.__hostObject__['scope'].data = this.__dataObject__['proxy'];
 	}
 	
@@ -127,7 +161,7 @@
 		for(var key in fns){
 			/**
 			 * 각 호스트 메소드의 현재 스코프는 자기자신(폼바인더)의 인스턴스를 가리킨다.
-			 * 현재 스코프 객체는 자기자신의 id, schema, method 들로 구성되어 있다. 
+			 * 현재 스코프 객체는 자기자신의 id, validation, method 들로 구성되어 있다. 
 			 */
 			this.__hostObject__[type][key] = fns[key].bind(this.__hostObject__['scope']);
 		}
@@ -146,60 +180,65 @@
 			/**
 			 * bind 속성과 v-bind 속성이 저부 있다면 bind 속성만 적용
 			 */
-			this.checkOverlap(els[i]);
-			this.setElementObjectProperty(type, els[i]);
+			this.initHostValidation(els[i], type);
+			this.checkOverlapBindProperty(els[i]);
+			this.setElementObjectProperty(els[i], type);
 			this.addHostPropertyToElement(els[i]);
-			this.initDataObject(type, els[i]);
+			this.initDataObject(els[i], type);
 			this.addEvent(els[i]);
 		}
 	}
 	
-	formBinder.prototype.addEvent = function (el) {
+	formBinder.prototype.initHostValidation = function (el, type) {
+		var validation = this.__hostObject__['validation'];
+		var key = el.getAttribute(type);
 		
-		var editBeginEvent = this.editBeginEventListener.bind(this);
-		var inputEvent = this.inputEventListener.bind(this);
-		var editEndEvent = this.editEndEventListener.bind(this);
-
-		el.addEventListener('focusin', editBeginEvent, false);
-		el.addEventListener('input', inputEvent, false);
-		el.addEventListener('focusout', editEndEvent, false);
+		if( !__hasProp.call(validation, key) ){
+			validation[key] = __getDefaultValidation(); 
+		}
+	}
+	
+	formBinder.prototype.addEvent = function (el) {
+		el.addEventListener('focusin', this.editBeginEventListener, false);
+		el.addEventListener('input', this.inputEventListener, false);
+		el.addEventListener('focusout', this.editEndEventListener, false);
 	}
 
 	formBinder.prototype.editBeginEventListener = function (e) {
 		e.preventDefault();
 		e.stopPropagation();
 		
-		e.target.value = e.target['@value'];
+		e.target['@prop']['@isEditing'] = true;
+		
+		if(e.target['@prop']['@valid'].type === 'number' && e.target['@prop']['@value'] === __inputDefaultNumber){
+			e.target.value = '';
+		} else {
+			e.target.value = e.target['@prop']['@value'];
+		}
 	};
 	
 	formBinder.prototype.inputEventListener = function (e) {
 		e.preventDefault();
 		e.stopPropagation();
-		
-		//e.target['@value'] = e.target.value;
+		e.target['@prop']['@data'][e.target['@prop']['@bind']] = e.target.value;
+		e.target.value = e.target['@prop']['@value'];
 	};
 	
 	formBinder.prototype.editEndEventListener = function (e) {
 		e.preventDefault();
 		e.stopPropagation();
-		
-		//this.__dataObject__['proxy'][e.target['@bind']] = e.target['@value'];
-		console.log(this.__dataObject__);
+		e.target['@prop']['@isEditing'] = false;
+		e.target['@prop']['@data'][e.target['@prop']['@bind']] = e.target.value;
+		e.target.value = e.target['@prop']['@value-fmt'];
 	};
 	
-	formBinder.prototype.checkOverlap = function (el) {
+	formBinder.prototype.checkOverlapBindProperty = function (el) {
 		if( el.hasAttribute('bind') && el.hasAttribute('v-bind') ){
 			el.removeAttribute('v-bind');
 		}
 	}
 	
-	formBinder.prototype.checkOverlap = function (el) {
-		if( el.hasAttribute('bind') && el.hasAttribute('v-bind') ){
-			el.removeAttribute('v-bind');
-		}
-	}
-	
-	formBinder.prototype.setElementObjectProperty = function (type, el) {
+	formBinder.prototype.setElementObjectProperty = function (el, type) {
 		var elementObject = this.__elementObject__[type];
 		var key = el.getAttribute(type);
 		if( !__hasProp.call(elementObject, key) ){
@@ -209,36 +248,54 @@
 	}
 	
 	formBinder.prototype.addHostPropertyToElement = function (el) {
+		el['@prop'] = Object.create(null);
+		
 		this.addFormatterPropertyToElement(el);
 		var attrs = el.attributes;
 		var i, len=attrs.length;
 		for(i=0; i<len; i++){
-			this.addKeyPropertyToElement(el, attrs[i].value);
+			this.addKeyPropertyToElement(el, attrs[i].name, attrs[i].value);
 			this.addEventPropertyToElement(el, attrs[i].name, attrs[i].value);
 		}
+		
+		__definePropertyToReadOnly(el, '@prop');
+		
 	}
 	
 	formBinder.prototype.addFormatterPropertyToElement = function (el) {
+		var elProp = el['@prop'];
 		if( !el.hasAttribute('@fmt') ){
-			el['@fmt'] = function () {};
+			elProp['@fmt'] = function () {};
 			return;
 		}
 		
 		var formatterNm = el.getAttribute('@fmt');
 		try {
-			el['@fmt'] = this.__hostObject__['formatter'][formatterNm];
+			elProp['@fmt'] = this.__hostObject__['formatter'][formatterNm];
 		} catch(e) {
 			this.throwError('type', '"' + formatterNm + '" is not found in formatter');
 		}
 	}
 	
-	formBinder.prototype.addKeyPropertyToElement = function (el, propValue) {
-		el['@bind'] = propValue;
+	formBinder.prototype.addKeyPropertyToElement = function (el, propNm, propValue) {
+		if( propNm === 'bind' || propNm === 'v-bind' ){
+			var elProp = el['@prop'];
+			elProp['@bind'] = propValue;
+			elProp['@isEditing'] = false;
+			elProp['@data'] = this.__dataObject__['proxy'];
+			elProp['@valid'] = this.__hostObject__['validation'][propValue] || {};
+			elProp['@isValue'] = 
+			( el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' )
+  	   ? true 
+  	   : false
+			;	
+		}
 	}
 	
 	formBinder.prototype.addEventPropertyToElement = function (el, evtNm, evtHandlerNm) {
-		if( !__hasProp.call(el, '@event') ){
-			el['@event'] = Object.create(null);
+		var elProp = el['@prop'];
+		if( !__hasProp.call(elProp, '@event') ){
+			elProp['@event'] = Object.create(null);
 		}
 		if( evtNm.indexOf('@') === -1 || evtNm === '@fmt' ){
 			return;
@@ -248,19 +305,14 @@
 			/**
 			 * 이 요소가 dom에서 제거될 때 이 곳에서 선언한 이벤트리스너를 지우기 위해 필요한 정보를 요소 속성에 담아둔다.
 			 */
-			el['@event'][evtNm] = this.__hostObject__['eventHandler'][evtHandlerNm];
-			el.addEventListener(evtNm, el['@event'][evtNm]);
+			elProp['@event'][evtNm] = this.__hostObject__['eventHandler'][evtHandlerNm];
+			el.addEventListener(evtNm, elProp['@event'][evtNm]);
 		} catch(e) {
 			this.throwError('type', '"' + evtHandlerNm + '" is not found in eventHandler');
 		}
 	}
 	
-	formBinder.prototype.addValuePropertyToElement = function (el, value) {
-		el['@value'] = value;
-		el['@value-fmt'] = el['@fmt'](value) || value;
-	}
-	
-	formBinder.prototype.initDataObject = function (type, el) {
+	formBinder.prototype.initDataObject = function (el, type) {
 		var dataObject = this.__dataObject__['data'];
 		var dataProxyObject = this.__dataObject__['proxy'];
 		var key = el.getAttribute(type);
@@ -272,15 +324,18 @@
 			 */
 			dataProxyObject[key] = ( dataProxyObject[key] != undefined ) ? dataProxyObject[key] : '';
 			dataObject[key] = dataProxyObject[key]; 
-			this.defineDataProxyProperty(dataProxyObject, key);
+			this.defineDataProxyProperty(el, key, dataProxyObject);
 		}
 		
-		this.addValuePropertyToElement(el, dataProxyObject[key]);
+		this.addValuePropertyToElement(dataProxyObject[key], el['@prop'], el['@prop']['@valid']);
 	}
 	
-	formBinder.prototype.defineDataProxyProperty = function (dataProxyObject, propNm) {
+	formBinder.prototype.defineDataProxyProperty = function (el, propNm, dataProxyObject) {
 		/**
 		 * @Todo 메모리 누수 체크
+		 * 데이터 프록시 객체에 get, set 함수를 정의
+		 * 폼요소에서 input 이벤트리스너에서 프록시객체에 값을 할당할 때 set 메소드가 실행
+		 * 프록시 객체에서 데이터를 호출할 때 get 메소드가 실행
 		 */
 		var _this = this;
 		var dataObject = _this.__dataObject__['data'];
@@ -289,44 +344,97 @@
 				return dataObject[propNm];
 			},
 			set: function (v) {
-				dataObject[propNm] = v;
-				_this.setValueToElement('bind', propNm, v);
-				_this.setValueToElement('v-bind', propNm, v);
+				console.log(v);
+				console.log(_this.__dataObject__);
+				_this.eachBindElementForSetValue(propNm, v, 'bind');
+				_this.eachBindElementForSetValue(propNm, v, 'v-bind');
 			}
 		});
 	}
 
 	formBinder.prototype.setDefault = function () {
-		this.setValueToAllElement('bind');
-		this.setValueToAllElement('v-bind');
+		this.allEachBindElementForSetValue('bind');
+		this.allEachBindElementForSetValue('v-bind');
 	}
 	
-	formBinder.prototype.setValueToAllElement = function (type) {
+	formBinder.prototype.allEachBindElementForSetValue = function (type) {
 		var bindElement = this.__elementObject__[type];
 		var data = this.__dataObject__['proxy'];
 		var i, len;
 		for(var k in bindElement){
 			len=bindElement[k].length
 			for(i=0; i<len; i++){
-				bindElement[k][i].value = bindElement[k][i]['@value-fmt'];
+				this.setValueToElement(type, bindElement[k][i], bindElement[k][i]['@prop']);
 			}
 		}
 	}
 	
-	formBinder.prototype.setValueToElement = function (type, key, value) {
+	formBinder.prototype.eachBindElementForSetValue = function (key, value, type) {
 		var elementArray = this.__elementObject__[type][key];
+
+		if( elementArray === undefined){
+			return; 
+		}
 		var data = this.__dataObject__['proxy'];
-		var i,len=elementArray.length;
+		var newValue, i, len=elementArray.length;
+		
 		/**
 		 * 각 요소의 바인딩 속성을 새로운 값으로 갱신한 뒤 포매팅값으로 값 세팅
 		 */
 		for(i=0; i<len; i++){
-			this.addValuePropertyToElement(elementArray[i], value);
-			( type === 'bind' ) 
-			? elementArray[i].value = elementArray[i]['@value-fmt']
-			: elementArray[i].textContent = elementArray[i]['@value-fmt']
-			;
+			newValue = this.addValuePropertyToElement(value, elementArray[i]['@prop'], elementArray[i]['@prop']['@valid']);
+			this.setValueToElement(type, elementArray[i], elementArray[i]['@prop']);
 		}
+		
+		this.__dataObject__['data'][key] = newValue; 
+	}
+	
+	formBinder.prototype.addValuePropertyToElement = function (value, elProp, valid) {
+		elProp['@value'] = this.validValue(elProp, valid, value);
+		elProp['@value-fmt'] = this.validValue(elProp, valid, elProp['@fmt'](value) || value);
+		return elProp['@value']; 
+	}
+	
+	formBinder.prototype.setValueToElement = function (type, el, elProp) {
+		if(elProp['@isEditing'] === true){
+			return;
+		}
+		
+		if( elProp['@isValue'] === true ) {
+			el.value = elProp['@value-fmt'];
+		} else {
+			el.textContent = elProp['@value-fmt'];
+		}
+	}
+	
+	formBinder.prototype.validValue = function (elProp, valid, value){
+		value = String(value);
+		
+		if( valid.maxLength > 0 && value.length > valid.maxLength ){
+			//this.throwError('range', '"' + elProp['@bind'] + '" must be less than ' + valid.maxLength + ': ' + value, false);
+			value = value.substring(0, valid.maxLength);
+		}
+		
+		switch(valid.type){
+			case 'number':
+				/**
+				 * 유효 타입이 숫자인 경우 숫자와 [.]를 제외한 문자는 제거.
+				 */
+				value = value.toString().replace(__REGEXP_NUMBER, '');
+				/*
+				 * 현재 입력중이 아닐 때, 
+				 * 값이 없으면 기본값인 0으로 입력 처리.
+				 * 값이 있으면 해당 값을 실수 변환 처리.
+				 */
+				if(elProp['@isEditing'] === false){
+					value = ( value === '' ) ? __inputDefaultNumber : parseFloat(value);
+				}
+				break;
+			default :
+				break;
+		}
+		
+		return value;
 	}
 	
 	formBinder.prototype.getData = function (){
