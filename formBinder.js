@@ -8,7 +8,7 @@
 	}else{
 		window[name] = factory;
 	}
-}('formBinder',function (){ 'use strict'
+}('FormBinder',function (){ 'use strict'
 	
 	
 	var 
@@ -46,7 +46,10 @@
 		 * dom-object 바인딩에 필요한 속성 생성
 		 */
 		this.createBindProperty(option);
-
+		/**
+		 * 폼바인더 객체 생성시 반환해줄 callee 생성
+		 */
+		this.createCallee();
 		/**
 		 * 사용자 정의 함수들 초기화
 		 */
@@ -58,11 +61,6 @@
 		 */
 		this.initElementObject(option);
 		
-		/**
-		 * 폼바인더 객체 생성시 반환해줄 callee 생성
-		 */
-		this.createCallee();
-
 		this.setDefault();
 	}
 	
@@ -73,17 +71,12 @@
 		if( typeof option !== 'object' ){
 			this.throwError('type', 'constructor parameter must be object');
 		} else
-		if( !option.hasOwnProperty('id') ){
+		if( !__hasProp.call(option, 'id') ){
 			this.throwError('syntax', '[constructor parameter] property is required: "id"');
 		}
 		
-		if( option.hasOwnProperty('validation') ){
-			if( Array.isArray(option['validation']) ){
-				( option.validation[0] === undefined ) ? {} : option.validation[0];
-				( option.validation[1] === undefined ) ? function () {} : option.validation[1];
-			} else {
-				this.throwError('syntax', '[constructor parameter] property must be array: "validation"');
-			}
+		if( !__hasProp.call(option, 'validation') ){
+			option.validation = {};
 		}
 	}
 	
@@ -102,8 +95,8 @@
 		 * 바인딩 대상의 element를 담을 객체 생성
 		 */
 		this.__elementObject__ = Object.create(null);
-		this.__elementObject__['bind'] = Object.create(null);
-		this.__elementObject__['v-bind'] = Object.create(null);
+		this.__elementObject__['@bind'] = Object.create(null);
+		this.__elementObject__['@v-bind'] = Object.create(null);
 		/**
 		 * 각 바인더 인스턴스의 이벤트 핸들러, 포매팅, 호스트 객체를 담을 객체 생성
 		 */
@@ -115,7 +108,11 @@
 	}
 	
 	formBinder.prototype.createCallee = function () {
-		this.callee = {};
+		this.callee = {
+			getData: this.getData.bind(this),
+			setData: this.setData.bind(this),
+			clear: this.clear.bind(this),
+		};
 	}
 	
 	formBinder.prototype.throwError = function (type, message, isThrow) {
@@ -149,12 +146,15 @@
 		this.setHostObject('scope', option.method);
 
 		this.__hostObject__['validation'] = option.validation[0];
-		this.__hostObject__['validFn'] = option.validation[1];
 		__definePropertyToReadOnly(this.__hostObject__, 'validation');
 		
 		this.__hostObject__['scope'].id = option.id;
 		this.__hostObject__['scope'].validation = this.__hostObject__['validation'];
 		this.__hostObject__['scope'].data = this.__dataObject__['proxy'];
+		
+		for(var k in this.callee){
+			this.__hostObject__['scope'][k] = this.callee[k];
+		}
 	}
 	
 	formBinder.prototype.setHostObject = function (type, fns) {
@@ -169,16 +169,44 @@
 	
 	formBinder.prototype.initElementObject = function (option) {
 		var form = document.getElementById(option.id);
-		this.setElementObject(form, 'bind');
-		this.setElementObject(form, 'v-bind');
+		this.setElementObject(form, '@bind');
+		this.setElementObject(form, '@v-bind');
+		this.setPropertyToMarkElement(form);
+	}
+	
+	formBinder.prototype.getBindElement = function (form, type) {
+		var els = [];
+		for(var i=0, len=form.length; i<len; i++){
+			if( form[i].hasAttribute(type) ){
+				els.push(form[i]);
+			}
+		}
+		return els;
+	}
+	
+	formBinder.prototype.setPropertyToMarkElement = function (form) {
+		var _this = this;
+		var els = _this.getBindElement(form, '@mark');
+		var i, len, attrs;
+		els.forEach(function (el) {
+			el['@prop'] = Object.create(null);
+			
+			attrs = el.attributes;
+			for(i=0, len=attrs.length; i<len; i++){
+				_this.addEventPropertyToElement(el, attrs[i].name, attrs[i].value);
+			}
+			
+			__definePropertyToReadOnly(el, '@prop');
+		});
 	}
 	
 	formBinder.prototype.setElementObject = function (form, type) {
-		var els = form.querySelectorAll('[' + type + ']');
+		var els = this.getBindElement(form, type);
+		
 		var i, len=els.length;
 		for(i=0; i<len; i++){
 			/**
-			 * bind 속성과 v-bind 속성이 저부 있다면 bind 속성만 적용
+			 * bind 속성과 v-bind 속성이 전부 있다면 bind 속성만 적용
 			 */
 			this.initHostValidation(els[i], type);
 			this.checkOverlapBindProperty(els[i]);
@@ -233,8 +261,8 @@
 	};
 	
 	formBinder.prototype.checkOverlapBindProperty = function (el) {
-		if( el.hasAttribute('bind') && el.hasAttribute('v-bind') ){
-			el.removeAttribute('v-bind');
+		if( el.hasAttribute('@bind') && el.hasAttribute('@v-bind') ){
+			el.removeAttribute('@v-bind');
 		}
 	}
 	
@@ -259,7 +287,6 @@
 		}
 		
 		__definePropertyToReadOnly(el, '@prop');
-		
 	}
 	
 	formBinder.prototype.addFormatterPropertyToElement = function (el) {
@@ -278,7 +305,7 @@
 	}
 	
 	formBinder.prototype.addKeyPropertyToElement = function (el, propNm, propValue) {
-		if( propNm === 'bind' || propNm === 'v-bind' ){
+		if( propNm === '@bind' || propNm === '@v-bind' ){
 			var elProp = el['@prop'];
 			elProp['@bind'] = propValue;
 			elProp['@isEditing'] = false;
@@ -293,20 +320,24 @@
 	}
 	
 	formBinder.prototype.addEventPropertyToElement = function (el, evtNm, evtHandlerNm) {
+		if( !__hasProp.call(el, '@prop') ){
+			el['@prop'] = Object.create(null);
+		}
+		
 		var elProp = el['@prop'];
 		if( !__hasProp.call(elProp, '@event') ){
 			elProp['@event'] = Object.create(null);
 		}
-		if( evtNm.indexOf('@') === -1 || evtNm === '@fmt' ){
+		if( evtNm.indexOf('@:') === -1 || evtNm === '@fmt' ){
 			return;
 		}
-		evtNm = evtNm.replace('@','');
+		evtNm = evtNm.replace('@:', '');
 		try {
 			/**
 			 * 이 요소가 dom에서 제거될 때 이 곳에서 선언한 이벤트리스너를 지우기 위해 필요한 정보를 요소 속성에 담아둔다.
 			 */
 			elProp['@event'][evtNm] = this.__hostObject__['eventHandler'][evtHandlerNm];
-			el.addEventListener(evtNm, elProp['@event'][evtNm]);
+			el.addEventListener(evtNm, elProp['@event'][evtNm].bind(this.callee));
 		} catch(e) {
 			this.throwError('type', '"' + evtHandlerNm + '" is not found in eventHandler');
 		}
@@ -344,17 +375,15 @@
 				return dataObject[propNm];
 			},
 			set: function (v) {
-				console.log(v);
-				console.log(_this.__dataObject__);
-				_this.eachBindElementForSetValue(propNm, v, 'bind');
-				_this.eachBindElementForSetValue(propNm, v, 'v-bind');
+				_this.eachBindElementForSetValue(propNm, v, '@bind');
+				_this.eachBindElementForSetValue(propNm, v, '@v-bind');
 			}
 		});
 	}
 
 	formBinder.prototype.setDefault = function () {
-		this.allEachBindElementForSetValue('bind');
-		this.allEachBindElementForSetValue('v-bind');
+		this.allEachBindElementForSetValue('@bind');
+		this.allEachBindElementForSetValue('@v-bind');
 	}
 	
 	formBinder.prototype.allEachBindElementForSetValue = function (type) {
@@ -364,7 +393,7 @@
 		for(var k in bindElement){
 			len=bindElement[k].length
 			for(i=0; i<len; i++){
-				this.setValueToElement(type, bindElement[k][i], bindElement[k][i]['@prop']);
+				this.setValueToElement(bindElement[k][i], bindElement[k][i]['@prop']);
 			}
 		}
 	}
@@ -383,7 +412,7 @@
 		 */
 		for(i=0; i<len; i++){
 			newValue = this.addValuePropertyToElement(value, elementArray[i]['@prop'], elementArray[i]['@prop']['@valid']);
-			this.setValueToElement(type, elementArray[i], elementArray[i]['@prop']);
+			this.setValueToElement(elementArray[i], elementArray[i]['@prop']);
 		}
 		
 		this.__dataObject__['data'][key] = newValue; 
@@ -391,16 +420,19 @@
 	
 	formBinder.prototype.addValuePropertyToElement = function (value, elProp, valid) {
 		elProp['@value'] = this.validValue(elProp, valid, value);
-		elProp['@value-fmt'] = this.validValue(elProp, valid, elProp['@fmt'](value) || value);
+		elProp['@value-fmt'] = this.validValue(elProp, valid, elProp['@fmt'].call(this.callee, value) || value);
 		return elProp['@value']; 
 	}
 	
-	formBinder.prototype.setValueToElement = function (type, el, elProp) {
+	formBinder.prototype.setValueToElement = function (el, elProp) {
 		if(elProp['@isEditing'] === true){
 			return;
 		}
 		
-		if( elProp['@isValue'] === true ) {
+		// 체크박스, 라디오일 때 값 세팅 처리가 추가적으로 필요함.
+		if( el.type == 'radio' || el.type == 'checkbox' ){
+			el.checked = ( el.value == 'Y' ) ? true : false; 
+		} else if( elProp['@isValue'] === true ) {
 			el.value = elProp['@value-fmt'];
 		} else {
 			el.textContent = elProp['@value-fmt'];
@@ -449,13 +481,15 @@
 	formBinder.prototype.setData = function (data){
 		var originData = this.__dataObject__['proxy'];
 		for(var k in data){
-			originData[k] = data[k];
+			if( __hasProp.call(originData, k) ){
+				originData[k] = data[k];
+			}
 		}
 	}
 	
 	formBinder.prototype.clear = function (){
 		var originData = this.__dataObject__['proxy'];
-		for(var k in data){
+		for(var k in originData){
 			originData[k] = '';
 		}
 	}
